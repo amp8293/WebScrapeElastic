@@ -1,0 +1,272 @@
+2018-11 Code Challenge, Adam Palmer amp8293@gmail.com  703-834-1265
+
+
+------------------------------------------------------------------------------------------
+Search Scraper
+Write a java CLI that can search google for batches of keywords, and store the search results.  
+
+Instructions:
+    Your solution will need to be able to be pulled down from github, set up and can run on a MacOS or on a linux based virtual machine
+    You need to provide instructions on how to set up, test, and run your application
+    The solution will use Elasticsearch to store search tasks and search results
+    Each keyword in a search task must be searched 
+    Each search must be done at a random interval, between 1 and 5 seconds between searches
+    Each URL returned for a search must be parsed, downloaded, and stored in a document (see below schema)
+    The solution can parallelize processing to increase performance (nice to have)
+
+The steps the CLI should perform are
+    Get a SearchTask from the data store,
+    For each keyword in the SearchTask perform a google search of the formhttps://www.google.com/search?q={keyword}&num=10&as_qdr=all, 
+    Parse each URL returned in the google search result, download it, and write the downloaded content to a SearchResult document
+
+
+Elasticsearch Schema to help you get started:
+
+// Stores the list of keywords for given client name
+// create 3 documents based on the below schema with the following
+// 1) searchName: "centralized logging", keywords: "datadog", "metrics", "logging"
+// 2) searchName: "relational databases", keywords: "postgres", "sql", "rbdms ", "mysql"
+// 3) searchName: "programming languages", keywords: "golang", "rust", "ruby", "python", "java", "clojure"
+
+{
+    "SearchTask" : {
+        "properties" : {
+            "taskName" : { "type" : "string", "index" : "not_analyzed" },
+            "keywords" : { "type" : "string", "index" : "not_analyzed" }
+            "createdAt" : { "type" : "date", "format": "epoch_millis||dateOptionalTime" },
+            "active" : { "type" : "boolean" }
+    }
+}
+
+
+// The search results should be saved in a SearchResult type, taskName should be the same name of the SearchTarget type that did the search.
+// content and title should be HTTP download content of search result obtained using the SearchTarget keyword
+{
+    "SearchResult" : {
+        "properties" : {
+            "taskName" : { "type" : "string", "index" : "not_analyzed" }
+            "content" : { "type" : "string", "index" : "analyzed" },
+            "title" : { "type" : "string", "index" : "analyzed" },
+            "httpStatusCode" : { "type" : "integer" },
+            "createdAt" : { "type" : "date", "format": "epoch_millis||dateOptionalTime" }
+    }
+}
+
+Feel free to modify the schema to accommodate your solution.
+------------------------------------------------------------------------------------------
+
+Current Report
+- Took about 6 hours to setup a windows 10 laptop I had access to, setup development environment, read up on elasticsearchic, jsoup, a bit on curl
+- I ran Elasticsearch ok, have scripts (below) to populate the 3 search records for the test, that seems to work ok
+- Have java code that will download web pages, have java code to read elasicsearch (using their new high level Java REST API) 
+- This is "proof of concept" grade, nowhere near production level (needs lots of error checking and testing for production level)
+- I estimate 2-3 hours more to pull everything together and create a fully functional proof of concept, but as it stands,
+  this report gives you a good idea of my thoughts and how I worked things out
+  
+  I will stop here since I've already spent a lot of time on this!
+  (if it doesn't give you a good idea of how I work, let me know.  If I were working with your staff, I could possibly get sample code from them and do things in a fraction of the time!!!)
+  
+Thoughts:
+- elastic search takes a second or more to update changes, so it's not a good option as a "tasks to be performed" queue if multiple workers will be reading it
+- if hundreds of thousands of pages are to be retrieved by multiple workers, I would maybe have a task that reads elastic search requests and fills
+  an activemq (or whatever fast reliable queue system) queue with tasks to be performed
+- if one ip (or whatever their real algorithm may be) requests a lot of google searches, google will eventually block them out,
+  so we can't do many google searches, maybe a few seconds delay inbetween, so parallelizing the google searches would be useless
+- we can, however fetch the result pages in parallel 
+  - either put several tasks in a queue and have several workers servicing the requests from that queue,
+    or just have a few threads and do things in parallel)
+  - for production grade, there are many things that can go wrong that we have to account for, and we'd have to figure out a reliable restart mechanism for tasks that failed
+  - for demo and feasability purposes, we can just log errors and move on
+  - I probably won't bother with parallelizing for now (though it may be only a small amount of code/work)
+
+- to fetch all search request records from elasticsearch: if the results are large, we would have to use the elasticsearch scroll API, or paginate manually
+  for smaller number of records (maybe up to 2000?), one result set is enough.
+  - for this test projects, I will NOT dive into the scroll API, and will assume the number of search records easily fits into memory
+- elasticsearch database parameters: using defaults for now, can add "properties/ini" config in production version, or command line arguments  
+
+
+Notes:
+Elasticsearch index name must be all lowercase (according to the elasicsearch 6.5 documentation, read 2018-11)
+
+
+Project log
+- I couldn't get to a decent development machine, so I used the laptop I had with me (Windows 10, 4Gig ram only)
+  - installed java, jdk, netbeans, elasicsearch (there was a bug with the zip version, the msi version worked ok)
+  elasicsearch takes 1.5GB memory!, which is scarce on this laptop!!!
+- using curl (and for that matter, any long command) on the windows shell was problematic, especially for quoting long strings, 
+  so I looked at windows powershell and other options, then opted for ...
+  - "Windows subsystem for Linux" feature in windows 10 ("Turn windows features on or off" of the control panel),
+  can get bash and other Linux support. It’s a full compatibility layer for running Linux applications on Windows.
+  - https://www.howtogeek.com/265900/everything-you-can-do-with-windows-10s-new-bash-shell/
+  - had to update windows, reboot, enable the windows subsystem, then download ubuntu from windows app store
+  - use /mnt/C/... for C drive, /mnt/C/Users/xxx for user xxx's windows home directory
+  
+- Did a google search using command line "curl", get "403 forbidden"
+  curl "https://www.google.com/search?q={water}&num=10&as_qdr=all" -o out1.html 
+- more web searches, found out must give it a "user agent"
+  curl --user-agent "Mozilla/4.0 (compatible; MSIE 5.01; Windows NT 5.0)" "https://www.google.com/search?q={water}&num=10&as_qdr=all" -o out1.html 
+- Put the output html into firefox and used the developer tools to look at the structure
+  it was not in the same format of "h3 ...", and the href="/url?q=http:...."
+  <a href="/url?q=http://www.waters.com/&amp;sa=U&amp;ved=0ahUKEwiy_o3txNTeAhXs6oMKHQtIAMIQFggOMAE&amp;usg=AOvVaw0dSvmMtPCNV50CZ-PIDLZ_">Waters: Home</a>
+- more web searches, found a jsoup java example, it used a different user agent, that worked fine.  I copied some code from them.
+  and was able to get web results through java (though google doesn't always return the number of results you ask for!)
+  - https://www.journaldev.com/7207/google-search-from-java-program-example
+  - https://jsoup.org/cookbook/extracting-data/selector-syntax
+  
+Here are results from searching for "water"
+Water - Wikipedia -> https://en.wikipedia.org/wiki/Water
+Properties of water - Wikipedia -> https://en.wikipedia.org/wiki/Properties_of_water
+Waters: Home -> http://www.waters.com/
+Fairfax Water: Home -> https://www.fairfaxwater.org/
+Water | H2O - PubChem -> https://pubchem.ncbi.nlm.nih.gov/compound/water
+water | Definition, Chemical Formula, Structure, & Facts | Britannica.com -> https://www.britannica.com/science/water
+How Water Works | HowStuffWorks -> https://science.howstuffworks.com/environmental/earth/geophysics/h2o.htm
+Upper Occoquan Service Authority -> https://www.uosa.org/
+Why Cape Town Is Running Out of Water, and the Cities That Are Next -> https://news.nationalgeographic.com/2018/02/cape-town-running-out-of-water-drought-taps-shutoff-other-cities/
+The Water Wars of Arizona - The New York Times -> https://www.nytimes.com/2018/07/19/magazine/the-water-wars-of-arizona.html
+Naturally Flavored Water - The Yummy Life -> https://www.theyummylife.com/Flavored_Water
+
+  
+ - I haven't worked with elastic search recently, so I read their quick intro, using curl and REST, it is fairly straightforward
+  I web-searched for java examples, didn't find much useful, so am resorting to putting sample code together myself
+  It turns out their original java "direct" API is to be deprecated soon in favor of the java REST interface,
+  there is a simple/basic java REST interface, and a high level one (which ingests the JSON, etc.),
+  I'm favoring the high level java REST interface for now (I WAS looking at the low level one, then realized I'd have to provide a lot of libraries for JSON, etc., and do a lot more work for each operation)
+
+
+To test if elastic search is running:  curl http://localhost:9200
+  (should return JSON with the server status, etc.)
+  
+------------------------------------------------------------------------------------------
+  
+Elasticsearch low level java REST interface
+https://www.elastic.co/guide/en/elasticsearch/client/java-rest/current/java-rest-low-usage-maven.html
+<dependency>
+    <groupId>org.elasticsearch.client</groupId>
+    <artifactId>elasticsearch-rest-client</artifactId>
+    <version>6.5.0</version>
+</dependency>  
+  
+------------------------------------------------------------------------------------------
+
+# to upload a file using curl  
+curl http://myservice --upload-file file.txt
+
+
+
+# elasticsearch getting started:  https://www.elastic.co/guide/en/elasticsearch/reference/current/getting-started.html
+# test if elasicsearch is running (should return server status info)
+curl http://localhost:9200
+
+# list indices
+curl  "http://localhost:9200/_cat/indices?v"
+
+# add records to elasicsearch
+curl -X PUT -H "Content-Type: application/json" -d '{ "taskName" : "centralized logging", "keywords" : [ "datadog", "metrics", "logging" ] }'  "http://localhost:9200/searchtask/_doc/1" 
+curl -X PUT -H "Content-Type: application/json" -d '{ "taskName" : "relational databases", "keywords" : [ "postgres", "sql", "rdbms", "mysql" ] }'  "http://localhost:9200/searchtask/_doc/2" 
+curl -X PUT -H "Content-Type: application/json" -d '{ "taskName" : "programming languages", "keywords" : [ "golang", "rust", "ruby", "python", "java", "clojure" ] }'  "http://localhost:9200/searchtask/_doc/3" 
+
+# read a records from elasicsearch
+curl  "http://localhost:9200/searchtask/_doc/1?pretty"
+
+#DELETE /customer?pretty
+#GET /_cat/indices?v
+# to add/index a document without giving it an explicit ID, use POST as in "POST /customer/_doc?pretty {  "name": "Jane Doe" }
+
+# list all records
+curl  "http://localhost:9200/searchtask/_search?q=*&sort=_id:asc&pretty"
+
+
+
+
+If sending form data:
+curl -X PUT -H "Content-Type: multipart/form-data;" -F "key1=val1" "YOUR_URI"
+
+If sending raw data as json:
+curl -X PUT -H "Content-Type: application/json" -d '{"key1":"value"}' "YOUR_URI"
+
+If sending a file with a POST request:
+curl -X POST "YOUR_URI" -F 'file=@/file-path.csv'
+
+
+
+------------------------------------------------------------------------------------------
+
+
+Output from elasticsearch test code:
+Running NetBeans Compile On Save execution. Phase execution is skipped and output directories of dependency projects (with Compile on Save turned on) will be used instead of their jar artifacts.
+Scanning for projects...
+                                                                        
+------------------------------------------------------------------------
+Building cmd2 1.0-SNAPSHOT
+------------------------------------------------------------------------
+
+--- exec-maven-plugin:1.5.0:exec (default-cli) @ cmd2 ---
+ERROR StatusLogger Log4j2 could not find a logging implementation. Please add log4j-core to the classpath. Using SimpleLogger to log to the console...
+Doc ID=1 {
+  "_index" : "searchtask",
+  "_type" : "_doc",
+  "_id" : "1",
+  "_score" : null,
+  "_source" : {
+    "taskName" : "centralized logging",
+    "keywords" : [
+      "datadog",
+      "metrics",
+      "logging"
+    ]
+  },
+  "sort" : [
+    "1"
+  ]
+}
+   TaskName=centralized logging Keywords=[datadog, metrics, logging]
+Doc ID=2 {
+  "_index" : "searchtask",
+  "_type" : "_doc",
+  "_id" : "2",
+  "_score" : null,
+  "_source" : {
+    "taskName" : "relational databases",
+    "keywords" : [
+      "postgres",
+      "sql",
+      "rdbms",
+      "mysql"
+    ]
+  },
+  "sort" : [
+    "2"
+  ]
+}
+   TaskName=relational databases Keywords=[postgres, sql, rdbms, mysql]
+Doc ID=3 {
+  "_index" : "searchtask",
+  "_type" : "_doc",
+  "_id" : "3",
+  "_score" : null,
+  "_source" : {
+    "taskName" : "programming languages",
+    "keywords" : [
+      "golang",
+      "rust",
+      "ruby",
+      "python",
+      "java",
+      "clojure"
+    ]
+  },
+  "sort" : [
+    "3"
+  ]
+}
+   TaskName=programming languages Keywords=[golang, rust, ruby, python, java, clojure]
+------------------------------------------------------------------------
+BUILD SUCCESS
+------------------------------------------------------------------------
+Total time: 5.956 s
+Finished at: 2018-11-20T14:18:49-05:00
+Final Memory: 12M/114M
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------
